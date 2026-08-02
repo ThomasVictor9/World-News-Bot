@@ -13,7 +13,12 @@ const cron = require('node-cron');
 // ---- Config ----
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const AUTO_POST_CHAT_ID = process.env.AUTO_POST_CHAT_ID;
+// Supports one or more destinations, comma-separated, e.g.
+// AUTO_POST_CHAT_ID=-1001234567890,-100987654321
+const AUTO_POST_CHAT_IDS = (process.env.AUTO_POST_CHAT_ID || '')
+  .split(',')
+  .map((id) => id.trim())
+  .filter(Boolean);
 const AUTO_POST_COUNTRY = process.env.AUTO_POST_COUNTRY || 'us';
 const AUTO_POST_CATEGORY = process.env.AUTO_POST_CATEGORY || 'general';
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '0 */3 * * *'; // every 3 hours by default
@@ -49,12 +54,111 @@ const COUNTRIES = [
   { code: 'jp', label: '🇯🇵 Japan' },
 ];
 
+// Full display name for every country NewsAPI supports (used in messages
+// and as the fallback search term).
+const COUNTRY_NAMES = {
+  ae: 'United Arab Emirates', ar: 'Argentina', at: 'Austria', au: 'Australia',
+  be: 'Belgium', bg: 'Bulgaria', br: 'Brazil', ca: 'Canada', ch: 'Switzerland',
+  cn: 'China', co: 'Colombia', cu: 'Cuba', cz: 'Czech Republic', de: 'Germany',
+  eg: 'Egypt', fr: 'France', gb: 'United Kingdom', gr: 'Greece', hk: 'Hong Kong',
+  hu: 'Hungary', id: 'Indonesia', ie: 'Ireland', il: 'Israel', in: 'India',
+  it: 'Italy', jp: 'Japan', kr: 'South Korea', lt: 'Lithuania', lv: 'Latvia',
+  ma: 'Morocco', mx: 'Mexico', my: 'Malaysia', ng: 'Nigeria', nl: 'Netherlands',
+  no: 'Norway', nz: 'New Zealand', ph: 'Philippines', pl: 'Poland', pt: 'Portugal',
+  ro: 'Romania', rs: 'Serbia', ru: 'Russia', sa: 'Saudi Arabia', se: 'Sweden',
+  sg: 'Singapore', si: 'Slovenia', sk: 'Slovakia', th: 'Thailand', tr: 'Turkey',
+  tw: 'Taiwan', ua: 'Ukraine', us: 'United States', ve: 'Venezuela', za: 'South Africa',
+};
+
+// Every name/alias a person might type, mapped to the NewsAPI country code.
+// This is what lets "Nigeria", "USA", "US", "United States", "Uk", and
+// "United Kingdom" all resolve correctly.
+const COUNTRY_ALIASES = {
+  'united arab emirates': 'ae', 'uae': 'ae',
+  'argentina': 'ar',
+  'austria': 'at',
+  'australia': 'au',
+  'belgium': 'be',
+  'bulgaria': 'bg',
+  'brazil': 'br',
+  'canada': 'ca',
+  'switzerland': 'ch',
+  'china': 'cn',
+  'colombia': 'co',
+  'cuba': 'cu',
+  'czech republic': 'cz', 'czechia': 'cz',
+  'germany': 'de',
+  'egypt': 'eg',
+  'france': 'fr',
+  'united kingdom': 'gb', 'uk': 'gb', 'britain': 'gb', 'great britain': 'gb', 'england': 'gb',
+  'greece': 'gr',
+  'hong kong': 'hk',
+  'hungary': 'hu',
+  'indonesia': 'id',
+  'ireland': 'ie',
+  'israel': 'il',
+  'india': 'in',
+  'italy': 'it',
+  'japan': 'jp',
+  'south korea': 'kr', 'korea': 'kr',
+  'lithuania': 'lt',
+  'latvia': 'lv',
+  'morocco': 'ma',
+  'mexico': 'mx',
+  'malaysia': 'my',
+  'nigeria': 'ng',
+  'netherlands': 'nl', 'holland': 'nl',
+  'norway': 'no',
+  'new zealand': 'nz',
+  'philippines': 'ph',
+  'poland': 'pl',
+  'portugal': 'pt',
+  'romania': 'ro',
+  'serbia': 'rs',
+  'russia': 'ru',
+  'saudi arabia': 'sa',
+  'sweden': 'se',
+  'singapore': 'sg',
+  'slovenia': 'si',
+  'slovakia': 'sk',
+  'thailand': 'th',
+  'turkey': 'tr', 'turkiye': 'tr',
+  'taiwan': 'tw',
+  'ukraine': 'ua',
+  'united states': 'us', 'usa': 'us', 'us': 'us', 'america': 'us', 'united states of america': 'us',
+  'venezuela': 've',
+  'south africa': 'za',
+};
+
+// Resolve whatever a person typed ("Nigeria", "USA", "uk", "ng"...) into a
+// NewsAPI country code. Returns null if nothing matches.
+function resolveCountry(input) {
+  const normalized = input.trim().toLowerCase();
+  if (COUNTRY_NAMES[normalized]) return normalized; // already a valid code
+  if (COUNTRY_ALIASES[normalized]) return COUNTRY_ALIASES[normalized];
+  return null;
+}
+
 // Temporary in-memory state: remembers the category a user picked
 // while they're choosing a country via buttons.
 const pendingSelection = {}; // { chatId: categoryCode }
 
-// ---- Helper: fetch news from NewsAPI ----
+// ---- Helper: fetch news from NewsAPI, with a fallback search ----
+// Some countries (e.g. Nigeria) have very few sources indexed under
+// /top-headlines on the free tier, so it often comes back empty even
+// with a correct country code. If that happens, fall back to a broader
+// /everything search for that country's news instead of giving up.
 async function fetchNews(country, category) {
+  const articles = await fetchTopHeadlines(country, category);
+  if (articles.length > 0) {
+    return articles;
+  }
+
+  console.log(`No top-headlines for ${country}/${category}, trying fallback search...`);
+  return fetchFallbackSearch(country, category);
+}
+
+async function fetchTopHeadlines(country, category) {
   try {
     const response = await axios.get('https://newsapi.org/v2/top-headlines', {
       params: {
@@ -66,7 +170,28 @@ async function fetchNews(country, category) {
     });
     return response.data.articles || [];
   } catch (error) {
-    console.error('Error fetching news:', error.response?.data || error.message);
+    console.error('Error fetching top-headlines:', error.response?.data || error.message);
+    return [];
+  }
+}
+
+async function fetchFallbackSearch(country, category) {
+  try {
+    const countryName = COUNTRY_NAMES[country] || country;
+    const query = category === 'general' ? countryName : `${countryName} ${category}`;
+
+    const response = await axios.get('https://newsapi.org/v2/everything', {
+      params: {
+        apiKey: NEWS_API_KEY,
+        q: query,
+        language: 'en',
+        sortBy: 'publishedAt',
+        pageSize: 6,
+      },
+    });
+    return response.data.articles || [];
+  } catch (error) {
+    console.error('Error fetching fallback search:', error.response?.data || error.message);
     return [];
   }
 }
@@ -92,7 +217,9 @@ function categoryLabel(code) {
   return CATEGORIES.find((c) => c.code === code)?.label || code;
 }
 function countryLabel(code) {
-  return COUNTRIES.find((c) => c.code === code)?.label || code;
+  const quickPick = COUNTRIES.find((c) => c.code === code);
+  if (quickPick) return quickPick.label;
+  return COUNTRY_NAMES[code] || code;
 }
 
 // ---- /start ----
@@ -102,9 +229,9 @@ bot.onText(/\/start/, (msg) => {
     '🌍 *Welcome to World News Bot*\n\n' +
       'Get breaking international news by category and country.\n\n' +
       'Use /news to pick with buttons, or type a command directly:\n' +
-      '`/news <country> <category>`\n' +
-      'Example: `/news gb business`\n\n' +
-      'Type /countries or /categories to see the available codes.',
+      '`/news <country> [category]`\n' +
+      'Examples: `/news Nigeria`, `/news United Kingdom business`, `/news USA`\n\n' +
+      'Type /countries or /categories to see everything I support.',
     { parse_mode: 'Markdown' }
   );
 });
@@ -114,9 +241,9 @@ bot.onText(/\/help/, (msg) => {
     msg.chat.id,
     'Commands:\n' +
       '/news - pick category & country with buttons\n' +
-      '/news <country> <category> - direct text command, e.g. /news us technology\n' +
+      '/news <country> [category] - direct command, e.g. /news Nigeria or /news United Kingdom business\n' +
       '/categories - list category codes\n' +
-      '/countries - list country codes'
+      '/countries - list supported countries'
   );
 });
 
@@ -126,30 +253,60 @@ bot.onText(/\/categories/, (msg) => {
 });
 
 bot.onText(/\/countries/, (msg) => {
-  const list = COUNTRIES.map((c) => `${c.code} - ${c.label}`).join('\n');
-  bot.sendMessage(msg.chat.id, `*Countries:*\n${list}`, { parse_mode: 'Markdown' });
+  const names = Object.values(COUNTRY_NAMES).sort();
+  const list = names.join(', ');
+  bot.sendMessage(
+    msg.chat.id,
+    `*Supported countries* (type the full name, e.g. "Nigeria", "United Kingdom", "USA"):\n\n${list}`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
 // ---- /news (no args) -> show category buttons ----
-// ---- /news <country> <category> -> direct fetch ----
-bot.onText(/^\/news(?:\s+(\S+)\s+(\S+))?$/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const country = match[1]?.toLowerCase();
-  const category = match[2]?.toLowerCase();
+// ---- /news <country name(s)> [category] -> direct fetch, e.g. /news Nigeria, /news United Kingdom business ----
+const CATEGORY_CODES = CATEGORIES.map((c) => c.code);
 
-  if (country && category) {
-    await sendNews(chatId, country, category);
+bot.onText(/^\/news(?:\s+(.+))?$/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const input = match[1]?.trim();
+
+  if (!input) {
+    // No args given -> show category buttons first
+    const keyboard = {
+      inline_keyboard: chunk(
+        CATEGORIES.map((c) => ({ text: c.label, callback_data: `cat:${c.code}` })),
+        2
+      ),
+    };
+    bot.sendMessage(chatId, 'Pick a category:', { reply_markup: keyboard });
     return;
   }
 
-  // No args given -> show category buttons first
-  const keyboard = {
-    inline_keyboard: chunk(
-      CATEGORIES.map((c) => ({ text: c.label, callback_data: `cat:${c.code}` })),
-      2
-    ),
-  };
-  bot.sendMessage(chatId, 'Pick a category:', { reply_markup: keyboard });
+  // Check if the last word is a valid category (e.g. "Nigeria business").
+  // Everything before it is treated as the country name. If the last word
+  // isn't a recognized category, treat the whole input as the country name
+  // and default to general/breaking news.
+  const words = input.split(/\s+/);
+  const lastWord = words[words.length - 1].toLowerCase();
+  let category = 'general';
+  let countryText = input;
+
+  if (CATEGORY_CODES.includes(lastWord)) {
+    category = lastWord;
+    countryText = words.slice(0, -1).join(' ');
+  }
+
+  const country = resolveCountry(countryText);
+
+  if (!country) {
+    bot.sendMessage(
+      chatId,
+      `I couldn't recognize "${countryText}" as a country. Try the full name (e.g. Nigeria, United Kingdom, USA) or type /countries to see everything I support.`
+    );
+    return;
+  }
+
+  await sendNews(chatId, country, category);
 });
 
 // ---- Handle button taps ----
@@ -204,21 +361,24 @@ function chunk(arr, size) {
   return out;
 }
 
-// ---- Auto-post breaking news (optional) ----
-if (AUTO_POST_CHAT_ID) {
+// ---- Auto-post breaking news (optional, supports multiple destinations) ----
+if (AUTO_POST_CHAT_IDS.length > 0) {
   cron.schedule(CRON_SCHEDULE, async () => {
     console.log('Running scheduled breaking news post...');
     const articles = await fetchNews(AUTO_POST_COUNTRY, AUTO_POST_CATEGORY);
     const title = `🚨 Breaking News - ${categoryLabel(AUTO_POST_CATEGORY)} (${countryLabel(AUTO_POST_COUNTRY)})`;
     const message = formatArticles(articles, title);
-    try {
-      await bot.sendMessage(AUTO_POST_CHAT_ID, message, { parse_mode: 'Markdown' });
-    } catch (error) {
-      console.error('Error auto-posting:', error.response?.body || error.message);
+
+    for (const destination of AUTO_POST_CHAT_IDS) {
+      try {
+        await bot.sendMessage(destination, message, { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error(`Error auto-posting to ${destination}:`, error.response?.body || error.message);
+      }
     }
   });
   console.log(
-    `Auto-post scheduled: "${CRON_SCHEDULE}" -> chat ${AUTO_POST_CHAT_ID} (${AUTO_POST_COUNTRY}/${AUTO_POST_CATEGORY})`
+    `Auto-post scheduled: "${CRON_SCHEDULE}" -> chats [${AUTO_POST_CHAT_IDS.join(', ')}] (${AUTO_POST_COUNTRY}/${AUTO_POST_CATEGORY})`
   );
 } else {
   console.log('AUTO_POST_CHAT_ID not set — auto-posting disabled (on-demand /news still works).');
