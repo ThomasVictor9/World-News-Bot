@@ -74,60 +74,62 @@ const COUNTRY_NAMES = {
 // This is what lets "Nigeria", "USA", "US", "United States", "Uk", and
 // "United Kingdom" all resolve correctly.
 const COUNTRY_ALIASES = {
-  'united arab emirates': 'ae', 'uae': 'ae',
-  'argentina': 'ar',
-  'austria': 'at',
-  'australia': 'au',
-  'belgium': 'be',
-  'bulgaria': 'bg',
-  'brazil': 'br',
-  'canada': 'ca',
-  'switzerland': 'ch',
-  'china': 'cn',
-  'colombia': 'co',
-  'cuba': 'cu',
-  'czech republic': 'cz', 'czechia': 'cz',
-  'germany': 'de',
-  'egypt': 'eg',
-  'france': 'fr',
-  'united kingdom': 'gb', 'uk': 'gb', 'britain': 'gb', 'great britain': 'gb', 'england': 'gb',
-  'greece': 'gr',
+  'united arab emirates': 'ae', 'uae': 'ae', 'emirati': 'ae',
+  'argentina': 'ar', 'argentinian': 'ar', 'argentine': 'ar',
+  'austria': 'at', 'austrian': 'at',
+  'australia': 'au', 'australian': 'au',
+  'belgium': 'be', 'belgian': 'be',
+  'bulgaria': 'bg', 'bulgarian': 'bg',
+  'brazil': 'br', 'brazilian': 'br',
+  'canada': 'ca', 'canadian': 'ca',
+  'switzerland': 'ch', 'swiss': 'ch',
+  'china': 'cn', 'chinese': 'cn',
+  'colombia': 'co', 'colombian': 'co',
+  'cuba': 'cu', 'cuban': 'cu',
+  'czech republic': 'cz', 'czechia': 'cz', 'czech': 'cz',
+  'germany': 'de', 'german': 'de',
+  'egypt': 'eg', 'egyptian': 'eg',
+  'france': 'fr', 'french': 'fr',
+  'united kingdom': 'gb', 'uk': 'gb', 'britain': 'gb', 'great britain': 'gb',
+  'england': 'gb', 'british': 'gb', 'english': 'gb',
+  'greece': 'gr', 'greek': 'gr',
   'hong kong': 'hk',
-  'hungary': 'hu',
-  'indonesia': 'id',
-  'ireland': 'ie',
-  'israel': 'il',
-  'india': 'in',
-  'italy': 'it',
-  'japan': 'jp',
-  'south korea': 'kr', 'korea': 'kr',
-  'lithuania': 'lt',
-  'latvia': 'lv',
-  'morocco': 'ma',
-  'mexico': 'mx',
-  'malaysia': 'my',
-  'nigeria': 'ng',
-  'netherlands': 'nl', 'holland': 'nl',
-  'norway': 'no',
-  'new zealand': 'nz',
-  'philippines': 'ph',
-  'poland': 'pl',
-  'portugal': 'pt',
-  'romania': 'ro',
-  'serbia': 'rs',
-  'russia': 'ru',
-  'saudi arabia': 'sa',
-  'sweden': 'se',
-  'singapore': 'sg',
-  'slovenia': 'si',
-  'slovakia': 'sk',
-  'thailand': 'th',
-  'turkey': 'tr', 'turkiye': 'tr',
-  'taiwan': 'tw',
-  'ukraine': 'ua',
-  'united states': 'us', 'usa': 'us', 'us': 'us', 'america': 'us', 'united states of america': 'us',
-  'venezuela': 've',
-  'south africa': 'za',
+  'hungary': 'hu', 'hungarian': 'hu',
+  'indonesia': 'id', 'indonesian': 'id',
+  'ireland': 'ie', 'irish': 'ie',
+  'israel': 'il', 'israeli': 'il',
+  'india': 'in', 'indian': 'in',
+  'italy': 'it', 'italian': 'it',
+  'japan': 'jp', 'japanese': 'jp',
+  'south korea': 'kr', 'korea': 'kr', 'korean': 'kr',
+  'lithuania': 'lt', 'lithuanian': 'lt',
+  'latvia': 'lv', 'latvian': 'lv',
+  'morocco': 'ma', 'moroccan': 'ma',
+  'mexico': 'mx', 'mexican': 'mx',
+  'malaysia': 'my', 'malaysian': 'my',
+  'nigeria': 'ng', 'nigerian': 'ng',
+  'netherlands': 'nl', 'holland': 'nl', 'dutch': 'nl',
+  'norway': 'no', 'norwegian': 'no',
+  'new zealand': 'nz', 'kiwi': 'nz',
+  'philippines': 'ph', 'filipino': 'ph', 'philippine': 'ph',
+  'poland': 'pl', 'polish': 'pl',
+  'portugal': 'pt', 'portuguese': 'pt',
+  'romania': 'ro', 'romanian': 'ro',
+  'serbia': 'rs', 'serbian': 'rs',
+  'russia': 'ru', 'russian': 'ru',
+  'saudi arabia': 'sa', 'saudi': 'sa',
+  'sweden': 'se', 'swedish': 'se',
+  'singapore': 'sg', 'singaporean': 'sg',
+  'slovenia': 'si', 'slovenian': 'si',
+  'slovakia': 'sk', 'slovak': 'sk',
+  'thailand': 'th', 'thai': 'th',
+  'turkey': 'tr', 'turkiye': 'tr', 'turkish': 'tr',
+  'taiwan': 'tw', 'taiwanese': 'tw',
+  'ukraine': 'ua', 'ukrainian': 'ua',
+  'united states': 'us', 'usa': 'us', 'us': 'us', 'america': 'us', 'american': 'us',
+  'united states of america': 'us',
+  'venezuela': 've', 'venezuelan': 've',
+  'south africa': 'za', 'south african': 'za',
 };
 
 // Resolve whatever a person typed ("Nigeria", "USA", "uk", "ng"...) into a
@@ -196,6 +198,28 @@ async function fetchFallbackSearch(country, category) {
   }
 }
 
+// ---- Free-text topic search (e.g. "football", "basketball", "elections") ----
+// The 7 fixed NewsAPI categories only cover broad buckets, so anything else
+// typed by the user (a sport, an event, a person, etc.) is searched directly.
+async function fetchTopicSearch(country, topic) {
+  try {
+    const countryName = COUNTRY_NAMES[country] || country;
+    const response = await axios.get('https://newsapi.org/v2/everything', {
+      params: {
+        apiKey: NEWS_API_KEY,
+        q: `${topic} ${countryName}`,
+        language: 'en',
+        sortBy: 'publishedAt',
+        pageSize: 6,
+      },
+    });
+    return response.data.articles || [];
+  } catch (error) {
+    console.error('Error fetching topic search:', error.response?.data || error.message);
+    return [];
+  }
+}
+
 // ---- Helper: format articles for a Telegram message ----
 function formatArticles(articles, title) {
   if (!articles.length) {
@@ -227,11 +251,17 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
     '🌍 *Welcome to World News Bot*\n\n' +
-      'Get breaking international news by category and country.\n\n' +
+      'Get breaking international news by country, and optionally any topic.\n\n' +
       'Use /news to pick with buttons, or type a command directly:\n' +
-      '`/news <country> [category]`\n' +
-      'Examples: `/news Nigeria`, `/news United Kingdom business`, `/news USA`\n\n' +
-      'Type /countries or /categories to see everything I support.',
+      '`/news <country> [topic]`\n' +
+      'Examples:\n' +
+      '`/news Nigeria` - general breaking news\n' +
+      '`/news Nigeria football`\n' +
+      '`/news Nigerian basketball`\n' +
+      '`/news USA business`\n' +
+      '`/news United Kingdom elections`\n\n' +
+      '⚠️ Always leave a space between the country and the topic (e.g. "USA football", not "USAfootball").\n\n' +
+      'Type /countries to see everything I support.',
     { parse_mode: 'Markdown' }
   );
 });
@@ -241,9 +271,10 @@ bot.onText(/\/help/, (msg) => {
     msg.chat.id,
     'Commands:\n' +
       '/news - pick category & country with buttons\n' +
-      '/news <country> [category] - direct command, e.g. /news Nigeria or /news United Kingdom business\n' +
-      '/categories - list category codes\n' +
-      '/countries - list supported countries'
+      '/news <country> [topic] - direct command, e.g. /news Nigeria football or /news USA business\n' +
+      '/categories - list the 7 fixed news categories\n' +
+      '/countries - list supported countries\n\n' +
+      'You can also type any topic (a sport, event, name, etc.), not just the fixed categories.'
   );
 });
 
@@ -263,8 +294,25 @@ bot.onText(/\/countries/, (msg) => {
 });
 
 // ---- /news (no args) -> show category buttons ----
-// ---- /news <country name(s)> [category] -> direct fetch, e.g. /news Nigeria, /news United Kingdom business ----
+// ---- /news <country name(s)> [topic] -> direct fetch ----
+// Examples: /news Nigeria | /news United Kingdom business | /news Nigeria football | /news USA basketball
 const CATEGORY_CODES = CATEGORIES.map((c) => c.code);
+
+// Try to match a country name at the START of the given words, checking the
+// longest possible phrase first (so "United Kingdom" matches before just
+// "United", and "South Africa" before "South"). Returns the matched country
+// code and how many words it consumed, or null if nothing matched.
+function matchCountryPrefix(words) {
+  const maxWords = Math.min(4, words.length);
+  for (let len = maxWords; len >= 1; len--) {
+    const phrase = words.slice(0, len).join(' ');
+    const country = resolveCountry(phrase);
+    if (country) {
+      return { country, consumed: len };
+    }
+  }
+  return null;
+}
 
 bot.onText(/^\/news(?:\s+(.+))?$/, async (msg, match) => {
   const chatId = msg.chat.id;
@@ -282,31 +330,21 @@ bot.onText(/^\/news(?:\s+(.+))?$/, async (msg, match) => {
     return;
   }
 
-  // Check if the last word is a valid category (e.g. "Nigeria business").
-  // Everything before it is treated as the country name. If the last word
-  // isn't a recognized category, treat the whole input as the country name
-  // and default to general/breaking news.
   const words = input.split(/\s+/);
-  const lastWord = words[words.length - 1].toLowerCase();
-  let category = 'general';
-  let countryText = input;
+  const matched = matchCountryPrefix(words);
 
-  if (CATEGORY_CODES.includes(lastWord)) {
-    category = lastWord;
-    countryText = words.slice(0, -1).join(' ');
-  }
-
-  const country = resolveCountry(countryText);
-
-  if (!country) {
+  if (!matched) {
     bot.sendMessage(
       chatId,
-      `I couldn't recognize "${countryText}" as a country. Try the full name (e.g. Nigeria, United Kingdom, USA) or type /countries to see everything I support.`
+      `I couldn't recognize a country at the start of "${input}". Make sure to leave a space between the country and topic (e.g. "USA football", not "USAfootball"). Type /countries to see everything I support.`
     );
     return;
   }
 
-  await sendNews(chatId, country, category);
+  const { country } = matched;
+  const topic = words.slice(matched.consumed).join(' ').trim();
+
+  await sendNews(chatId, country, topic);
 });
 
 // ---- Handle button taps ----
@@ -345,11 +383,32 @@ bot.on('callback_query', async (query) => {
 });
 
 // ---- Shared: fetch + send news ----
-async function sendNews(chatId, country, category) {
-  const articles = await fetchNews(country, category);
-  const title = `${categoryLabel(category)} - ${countryLabel(country)}`;
+// `topicOrCategory` can be empty (general breaking news), one of the 7 fixed
+// categories (business, sports, etc.), or any free-text topic (football,
+// basketball, elections, a person's name, ...).
+async function sendNews(chatId, country, topicOrCategory) {
+  const value = (topicOrCategory || '').trim().toLowerCase();
+
+  let articles;
+  let title;
+
+  if (!value || value === 'general') {
+    articles = await fetchNews(country, 'general');
+    title = `🌍 World - ${countryLabel(country)}`;
+  } else if (CATEGORY_CODES.includes(value)) {
+    articles = await fetchNews(country, value);
+    title = `${categoryLabel(value)} - ${countryLabel(country)}`;
+  } else {
+    articles = await fetchTopicSearch(country, topicOrCategory);
+    title = `${capitalize(topicOrCategory)} - ${countryLabel(country)}`;
+  }
+
   const message = formatArticles(articles, title);
   bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+}
+
+function capitalize(text) {
+  return text.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ---- Utility: split array into chunks (for keyboard rows) ----
