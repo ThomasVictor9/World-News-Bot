@@ -133,12 +133,63 @@ const COUNTRY_ALIASES = {
 };
 
 // Resolve whatever a person typed ("Nigeria", "USA", "uk", "ng"...) into a
-// NewsAPI country code. Returns null if nothing matches.
+// NewsAPI country code. Returns null if nothing matches exactly.
 function resolveCountry(input) {
   const normalized = input.trim().toLowerCase();
   if (COUNTRY_NAMES[normalized]) return normalized; // already a valid code
   if (COUNTRY_ALIASES[normalized]) return COUNTRY_ALIASES[normalized];
   return null;
+}
+
+// ---- Typo tolerance ----
+// Standard edit-distance calculation: counts how many single-character
+// changes it takes to turn one word into another (e.g. "idia" -> "india" is
+// distance 1). Used to catch small misspellings of country names.
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+  }
+  return dp[m][n];
+}
+
+// Single-word country names/aliases only (multi-word ones like "united
+// kingdom" are excluded — fuzzy-matching whole phrases is unreliable).
+// Bare 2-letter codes are also excluded: they're too short to fuzzy-match
+// safely (e.g. "oil" would otherwise wrongly match "il").
+const SINGLE_WORD_COUNTRY_KEYS = Object.keys(COUNTRY_ALIASES).filter(
+  (k) => !k.includes(' ') && k.length >= 4
+);
+
+// Try to fuzzy-match a single word against known country names/aliases,
+// allowing a small number of character differences (more allowance for
+// longer words, since a 1-letter typo matters more on a short word).
+function fuzzyResolveCountry(word) {
+  const normalized = word.trim().toLowerCase();
+  if (normalized.length < 4) return null; // too short to fuzzy-match safely
+
+  let best = null;
+  let bestDist = Infinity;
+
+  for (const key of SINGLE_WORD_COUNTRY_KEYS) {
+    const dist = levenshtein(normalized, key);
+    const threshold = key.length <= 5 ? 1 : 2;
+    if (dist <= threshold && dist < bestDist) {
+      bestDist = dist;
+      best = key;
+    }
+  }
+
+  return best ? COUNTRY_ALIASES[best] : null;
 }
 
 // Temporary in-memory state: remembers the category a user picked
@@ -253,15 +304,17 @@ bot.onText(/\/start/, (msg) => {
     '🌍 *Welcome to World News Bot*\n\n' +
       'Get breaking international news by country, and optionally any topic.\n\n' +
       'Use /news to pick with buttons, or type a command directly:\n' +
-      '`/news <country> [topic]`\n' +
-      'Examples:\n' +
-      '`/news Nigeria` - general breaking news\n' +
-      '`/news Nigeria football`\n' +
-      '`/news Nigerian basketball`\n' +
-      '`/news USA business`\n' +
-      '`/news United Kingdom elections`\n\n' +
-      '⚠️ Always leave a space between the country and the topic (e.g. "USA football", not "USAfootball").\n\n' +
-      'Type /countries to see everything I support.',
+      '`/news <country> <topic>`\n\n' +
+      '*Examples:*\n' +
+      '• `/news Nigeria politics`\n' +
+      '• `/news USA war`\n' +
+      '• `/news Canada technology`\n' +
+      '• `/news Germany sports`\n' +
+      '• `/news India business`\n' +
+      '• `/news France economy`\n' +
+      '• `/news Japan science`\n\n' +
+      '*Tip:* Always type the country first, followed by the topic, with a space between them. ' +
+      'If you\'re not sure which countries are supported, use /countries to view the full list.',
     { parse_mode: 'Markdown' }
   );
 });
@@ -269,12 +322,19 @@ bot.onText(/\/start/, (msg) => {
 bot.onText(/\/help/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
-    'Commands:\n' +
-      '/news - pick category & country with buttons\n' +
-      '/news <country> [topic] - direct command, e.g. /news Nigeria football or /news USA business\n' +
+    '*How to use World News Bot*\n\n' +
+      '`/news <country> <topic>`\n\n' +
+      '*Examples:*\n' +
+      '• `/news Nigeria politics`\n' +
+      '• `/news USA war`\n' +
+      '• `/news Canada technology`\n\n' +
+      '*Other commands:*\n' +
+      '/news - pick country & category with buttons instead\n' +
       '/categories - list the 7 fixed news categories\n' +
       '/countries - list supported countries\n\n' +
-      'You can also type any topic (a sport, event, name, etc.), not just the fixed categories.'
+      '*Tip:* Always type the country first, then the topic, with a space between them. ' +
+      'You can type any topic (a sport, event, name, etc.), not just the fixed categories.',
+    { parse_mode: 'Markdown' }
   );
 });
 
@@ -311,6 +371,14 @@ function matchCountryPrefix(words) {
       return { country, consumed: len };
     }
   }
+
+  // No exact match anywhere — try a typo-tolerant match on just the first
+  // word (covers things like "idia" -> India, "nigeriaa" -> Nigeria).
+  const fuzzy = fuzzyResolveCountry(words[0]);
+  if (fuzzy) {
+    return { country: fuzzy, consumed: 1 };
+  }
+
   return null;
 }
 
